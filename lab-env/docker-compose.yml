@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  teamserver:
+    build:
+      context: ../teamserver
+      dockerfile: Dockerfile
+    container_name: c2_teamserver
+    ports:
+      - "8000:8000"
+    networks:
+      - c2_network
+
+  victim_linux_alpha:
+    image: python:3.11-slim
+    container_name: victim_alpha
+    volumes:
+      - ../agent:/opt/agent
+    working_dir: /opt/agent
+    command: /bin/bash -c "pip install requests psutil && python agent.py"
+    environment:
+      - SERVER_URL=http://teamserver:8000
+    depends_on:
+      - teamserver
+    networks:
+      - c2_network
+
+  victim_linux_bravo:
+    image: python:3.11-slim
+    container_name: victim_bravo
+    volumes:
+      - ../agent:/opt/agent
+    working_dir: /opt/agent
+    command: /bin/bash -c "pip install requests psutil && sleep 3 && python agent.py"
+    environment:
+      - SERVER_URL=http://teamserver:8000
+    depends_on:
+      - teamserver
+    networks:
+      - c2_network
+
+networks:
+  c2_network:
+    driver: bridge
