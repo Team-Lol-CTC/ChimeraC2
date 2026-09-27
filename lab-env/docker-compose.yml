@@ -7,7 +7,7 @@ services:
       dockerfile: Dockerfile
     container_name: c2_teamserver
     ports:
-      - "8000:8000"
+      - "${TEAMSERVER_PORT:-8000}:8000"
     networks:
       - c2_network
 
@@ -17,9 +17,10 @@ services:
     volumes:
       - ../agent:/opt/agent
     working_dir: /opt/agent
-    command: /bin/bash -c "pip install requests psutil && python agent.py"
+    command: /bin/bash -c "pip install --quiet requests psutil && python agent.py"
     environment:
       - SERVER_URL=http://teamserver:8000
+      - CHECKIN_INTERVAL=${CHECKIN_INTERVAL:-5}
     depends_on:
       - teamserver
     networks:
@@ -31,9 +32,10 @@ services:
     volumes:
       - ../agent:/opt/agent
     working_dir: /opt/agent
-    command: /bin/bash -c "pip install requests psutil && sleep 3 && python agent.py"
+    command: /bin/bash -c "pip install --quiet requests psutil && python agent.py"
     environment:
       - SERVER_URL=http://teamserver:8000
+      - CHECKIN_INTERVAL=${CHECKIN_INTERVAL:-5}
     depends_on:
       - teamserver
     networks:
