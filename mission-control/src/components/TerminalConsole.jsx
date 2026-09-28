@@ -1,80 +1,158 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from "react"
 
 export default function TerminalConsole({
-  selectedAgentId,
-  outputs = [],
-  onExecuteCommand
+  output = [],
+  selectedAgent,
+  onSend,
 }) {
-  const [commandInput, setCommandInput] = useState('');
+  const [command, setCommand] = useState("")
+  const outputRef = useRef(null)
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
+  
+  useEffect(() => {
+    if (outputRef.current) {
+      outputRef.current.scrollTop = outputRef.current.scrollHeight
+    }
+  }, [output])
 
-    if (!commandInput.trim() || !selectedAgentId) return;
+  const handleSubmit = (event) => {
+    event.preventDefault()
 
-    onExecuteCommand(selectedAgentId, commandInput.trim());
-    setCommandInput('');
-  };
+    const trimmedCommand = command.trim()
+
+    if (!trimmedCommand || !selectedAgent) {
+      return
+    }
+
+    const sent = onSend(trimmedCommand)
+
+    if (sent) {
+      setCommand("")
+    }
+  }
+
+  const decodeOutput = (encodedOutput) => {
+    if (!encodedOutput) {
+      return ""
+    }
+
+    try {
+      return atob(encodedOutput)
+    } catch {
+      return "[Unable to decode terminal output]"
+    }
+  }
 
   return (
-    <div className="bg-black border border-slate-800 rounded-lg p-4 font-mono shadow-2xl">
-      <div className="flex justify-between items-center pb-2 mb-3 border-b border-slate-800 text-xs">
-        <span className="text-slate-400 font-bold uppercase tracking-wider">
-          Terminal Session:{' '}
-          <span className="text-emerald-400">
-            {selectedAgentId
-              ? `Agent [${selectedAgentId}]`
-              : 'Select an Agent Above'}
-          </span>
-        </span>
+    <div className="overflow-hidden rounded-2xl border border-white/10 bg-slate-950 shadow-2xl shadow-black/40 ring-1 ring-white/5">
+    
+      <div className="flex items-center justify-between border-b border-gray-800 bg-gray-950 px-5 py-4">
+        <div>
+          <h2 className="text-sm font-semibold text-white">
+            Terminal Console
+          </h2>
 
-        <span className="text-[11px] text-slate-600">
-          Interactive Shell / WebSockets
-        </span>
-      </div>
-
-      <div className="h-60 overflow-y-auto space-y-2 text-xs mb-3 pr-2 scrollbar-thin scrollbar-thumb-slate-800">
-        {outputs.length === 0 ? (
-          <p className="text-slate-600 italic">
-            Awaiting task dispatches and execution returns...
+          <p className="mt-1 text-xs text-gray-500">
+            {selectedAgent
+              ? `Connected to ${selectedAgent.hostname}`
+              : "No agent selected"}
           </p>
-        ) : (
-          outputs.map((entry, index) => (
-            <div key={index} className="space-y-1">
-              <p className="text-sky-400 font-bold">
-                &gt; {entry.command}
-              </p>
+        </div>
 
-              <pre className="text-slate-300 whitespace-pre-wrap bg-slate-950 p-2 rounded border border-slate-900">
-                {entry.output || '[No output returned]'}
-              </pre>
-            </div>
-          ))
+        {selectedAgent && (
+          <span className="rounded-md border border-emerald-400/20 bg-emerald-500/10 px-2.5 py-1 font-mono text-xs text-emerald-300">
+            {selectedAgent.agent_id}
+          </span>
         )}
       </div>
 
-      <form onSubmit={handleSubmit} className="flex gap-2">
+    
+      <div
+        ref={outputRef}
+        className="h-80 overflow-y-auto bg-gray-950 p-4 font-mono text-xs"
+      >
+        {!selectedAgent ? (
+          <div className="flex h-full items-center justify-center text-gray-500">
+            Select an agent to open a terminal.
+          </div>
+        ) : output.length === 0 ? (
+          <div className="text-gray-500">
+            No terminal activity yet.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {output.map((entry) => {
+              if (entry.kind === "queued") {
+                return (
+                  <div
+                    key={`${entry.task_id}-queued`}
+                    className="text-yellow-400"
+                  >
+                    <span className="text-gray-600">
+                      [{entry.ts}]
+                    </span>{" "}
+                    $ {entry.command}
+                  </div>
+                )
+              }
+
+              if (entry.kind === "result") {
+                return (
+                  <div
+                    key={`${entry.task_id}-result`}
+                    className="text-gray-300"
+                  >
+                    <div className="mb-1 text-gray-600">
+                      [{entry.ts}]
+                    </div>
+
+                    <pre className="whitespace-pre-wrap break-words">
+                      {decodeOutput(entry.output)}
+                    </pre>
+
+                    <div className="mt-1 text-gray-500">
+                      [exit {entry.exit_code ?? 0}]
+                    </div>
+                  </div>
+                )
+              }
+
+              return null
+            })}
+          </div>
+        )}
+      </div>
+
+   
+      <form
+        onSubmit={handleSubmit}
+        className="flex items-center border-t border-gray-800 bg-transparent"
+      >
+        <span className="px-4 font-mono text-sm text-emerald-400">
+          $
+        </span>
+
         <input
           type="text"
-          value={commandInput}
-          disabled={!selectedAgentId}
-          onChange={(e) => setCommandInput(e.target.value)}
+          value={command}
+          onChange={(event) => setCommand(event.target.value)}
+          disabled={!selectedAgent}
           placeholder={
-            selectedAgentId
-              ? 'Type shell command...'
-              : 'Select an agent to issue commands'
+            selectedAgent
+              ? "Enter command..."
+              : "Select an agent first"
           }
-          className="flex-1 bg-slate-950 border border-slate-800 rounded px-3 py-2 text-xs text-emerald-300 focus:outline-none focus:border-indigo-500 disabled:opacity-50"
+          className="min-w-0 flex-1 bg-transparent py-4 pr-4 font-mono text-sm text-gray-200 outline-none placeholder:text-gray-600 disabled:cursor-not-allowed"
         />
 
         <button
           type="submit"
-          disabled={!selectedAgentId || !commandInput.trim()}
-          className="bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-600 text-white text-xs font-bold px-4 py-2 rounded transition-colors"
+          disabled={!selectedAgent || !command.trim()}
+          className="mr-3 rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-gray-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
         >
-          Send Task
+          Send
         </button>
       </form>
     </div>
-  );
+  )
 }
