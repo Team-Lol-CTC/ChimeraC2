@@ -8,7 +8,6 @@ export default function TerminalConsole({
   const [command, setCommand] = useState("")
   const outputRef = useRef(null)
 
-  
   useEffect(() => {
     if (outputRef.current) {
       outputRef.current.scrollTop = outputRef.current.scrollHeight
@@ -45,7 +44,6 @@ export default function TerminalConsole({
 
   return (
     <div className="overflow-hidden rounded-2xl border border-white/10 bg-slate-950 shadow-2xl shadow-black/40 ring-1 ring-white/5">
-    
       <div className="flex items-center justify-between border-b border-gray-800 bg-gray-950 px-5 py-4">
         <div>
           <h2 className="text-sm font-semibold text-white">
@@ -66,7 +64,6 @@ export default function TerminalConsole({
         )}
       </div>
 
-    
       <div
         ref={outputRef}
         className="h-80 overflow-y-auto bg-gray-950 p-4 font-mono text-xs"
@@ -123,7 +120,6 @@ export default function TerminalConsole({
         )}
       </div>
 
-   
       <form
         onSubmit={handleSubmit}
         className="flex items-center border-t border-gray-800 bg-transparent"

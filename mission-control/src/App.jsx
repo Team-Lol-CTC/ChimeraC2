@@ -1,108 +1,74 @@
-import { useState } from "react"
-import AgentTable from "./components/AgentTable"
-import TerminalConsole from "./components/TerminalConsole"
+import { useState } from 'react';
+import { useC2Stream } from './hooks/useC2Stream';
+import AgentTable from './components/AgentTable';
+import TerminalConsole from './components/TerminalConsole';
 
-const SAMPLE_AGENTS = [
-  {
-    agent_id: "AG-001",
-    hostname: "WIN-DC01",
-    os: "windows",
-    user: "SYSTEM",
-    ip: "10.0.12.4",
-    last_check_in: "2026-09-28T00:30:00Z",
-    status: "online",
-  },
-  {
-    agent_id: "AG-002",
-    hostname: "ubuntu-web-03",
-    os: "linux",
-    user: "www-data",
-    ip: "10.0.12.51",
-    last_check_in: "2026-09-28T00:28:00Z",
-    status: "online",
-  },
-  {
-    agent_id: "AG-003",
-    hostname: "MACBOOK-PRO",
-    os: "darwin",
-    user: "j.reyes",
-    ip: "10.0.12.88",
-    last_check_in: "2026-09-28T00:20:00Z",
-    status: "offline",
-  },
-]
-
-function App() {
-  const [selectedAgentId, setSelectedAgentId] = useState(null)
-  const [output, setOutput] = useState([])
+export default function App() {
+  const { agents, terminalOutput, sendCommand, status } = useC2Stream();
+  const [selectedAgentId, setSelectedAgentId] = useState(null);
 
   const selectedAgent =
-    SAMPLE_AGENTS.find(
-      (agent) => agent.agent_id === selectedAgentId
-    ) || null
+    agents.find((agent) => agent.agent_id === selectedAgentId) || null;
 
   const handleSend = (command) => {
-    if (!selectedAgent) {
-      return false
-    }
+    if (!selectedAgentId) return false;
+    return sendCommand(selectedAgentId, command);
+  };
 
-    const taskId = `TASK-${Date.now()}`
-
-    
-    setOutput((previous) => [
-      ...previous,
-      {
-        kind: "queued",
-        task_id: taskId,
-        agent_id: selectedAgent.agent_id,
-        command,
-        ts: new Date().toISOString(),
-      },
-    ])
-
-    
-    setTimeout(() => {
-      const dummyResponse = `Response from ${selectedAgent.agent_id}\nCommand: ${command}`
-
-      const encodedOutput = btoa(dummyResponse)
-
-      setOutput((previous) => [
-        ...previous,
-        {
-          kind: "result",
-          task_id: taskId,
-          agent_id: selectedAgent.agent_id,
-          output: encodedOutput,
-          exit_code: 0,
-          ts: new Date().toISOString(),
-        },
-      ])
-    }, 500)
-
-    return true
-  }
+  const agentTerminalOutput = selectedAgentId
+    ? terminalOutput.filter(
+        (entry) => !entry.agent_id || entry.agent_id === selectedAgentId
+      )
+    : terminalOutput;
 
   return (
-    <main className="min-h-screen bg-slate-950 p-6">
-      <h1 className="mb-6 text-2xl font-bold text-white">
-        ChimeraC2 Mission Control
-      </h1>
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
+      {/* Header */}
+      <header className="border-b border-white/10 px-6 py-4 flex items-center justify-between bg-slate-950/80 backdrop-blur sticky top-0 z-10">
+        <div>
+          <h1 className="text-xl font-bold tracking-tight text-white">ChimeraC2</h1>
+          <p className="text-xs text-slate-400">Mission Control</p>
+        </div>
+        <ConnectionStatus status={status} />
+      </header>
 
-      <div className="space-y-6">
+      {/* Main Content */}
+      <main className="flex-1 p-6 space-y-6">
         <AgentTable
-          agents={SAMPLE_AGENTS}
+          agents={agents}
           selectedAgentId={selectedAgentId}
           onSelectAgent={setSelectedAgentId}
         />
 
         <TerminalConsole
-          output={output}
+          output={agentTerminalOutput}
           selectedAgent={selectedAgent}
           onSend={handleSend}
         />
-      </div>
-    </main>
-  )
+      </main>
+    </div>
+  );
 }
 
-export default App
+function ConnectionStatus({ status }) {
+  const color =
+    status === 'open'
+      ? 'bg-emerald-400 shadow-emerald-400/50'
+      : status === 'connecting'
+      ? 'bg-yellow-400 shadow-yellow-400/50 animate-pulse'
+      : 'bg-red-400 shadow-red-400/50';
+
+  const label =
+    status === 'open'
+      ? 'Connected'
+      : status === 'connecting'
+      ? 'Connecting…'
+      : 'Disconnected';
+
+  return (
+    <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-slate-300">
+      <span className={`h-2 w-2 rounded-full shadow-sm ${color}`} />
+      <span className="font-medium">{label}</span>
+    </div>
+  );
+}
