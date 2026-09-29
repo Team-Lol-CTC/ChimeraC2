@@ -8,9 +8,9 @@ export function useC2Stream(wsUrl = 'ws://localhost:8000/ws/operator') {
   const reconnectRef = useRef(null);
   const shouldReconnectRef = useRef(true);
 
-  const connect = useCallback(() => {
-    setStatus('connecting');
+  const connectRef = useRef(null);
 
+  const connect = useCallback(() => {
     const ws = new WebSocket(wsUrl);
     socketRef.current = ws;
 
@@ -23,7 +23,10 @@ export function useC2Stream(wsUrl = 'ws://localhost:8000/ws/operator') {
       setStatus('closed');
       console.warn('[C2Stream] disconnected');
       if (shouldReconnectRef.current) {
-        reconnectRef.current = setTimeout(connect, 2000);
+        reconnectRef.current = setTimeout(() => {
+          setStatus('connecting');
+          connectRef.current?.();
+        }, 2000);
       }
     };
 
@@ -88,6 +91,7 @@ export function useC2Stream(wsUrl = 'ws://localhost:8000/ws/operator') {
   }, [wsUrl]);
 
   useEffect(() => {
+    connectRef.current = connect;
     shouldReconnectRef.current = true;
     connect();
 
