@@ -1,7 +1,9 @@
+import ActivityTimeline from './components/ActivityTimeline';
 import { useState } from 'react';
 import { useC2Stream } from './hooks/useC2Stream';
 import AgentTable from './components/AgentTable';
 import TerminalConsole from './components/TerminalConsole';
+import TaskHistory from './components/TaskHistory';
 
 export default function App() {
   const { agents, terminalOutput, sendCommand, status } = useC2Stream();
@@ -41,10 +43,18 @@ export default function App() {
         />
 
         <TerminalConsole
-          output={agentTerminalOutput}
-          selectedAgent={selectedAgent}
-          onSend={handleSend}
-        />
+  output={agentTerminalOutput}
+  selectedAgent={selectedAgent}
+  onSend={handleSend}
+/>
+
+<TaskHistory
+  selectedAgentId={selectedAgentId}
+/>
+
+<ActivityTimeline
+  selectedAgentId={selectedAgentId}
+/>
       </main>
     </div>
   );

