@@ -14,6 +14,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
 # In-Memory Real-Time State
 connected_agents: Dict[str, dict] = {}
 task_queues: Dict[str, List[dict]] = {}
