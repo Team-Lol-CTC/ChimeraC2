@@ -1,63 +1,60 @@
+import ActivityTimeline from './components/ActivityTimeline';
 import { useState } from 'react';
 import { useC2Stream } from './hooks/useC2Stream';
 import AgentTable from './components/AgentTable';
 import TerminalConsole from './components/TerminalConsole';
+import TaskHistory from './components/TaskHistory';
 
 export default function App() {
   const { agents, terminalOutput, sendCommand, status } = useC2Stream();
   const [selectedAgentId, setSelectedAgentId] = useState(null);
 
-  const selectedAgent = agents.find((a) => a.agent_id === selectedAgentId) || null;
+  const selectedAgent =
+    agents.find((agent) => agent.agent_id === selectedAgentId) || null;
 
   const handleSend = (command) => {
     if (!selectedAgentId) return false;
     return sendCommand(selectedAgentId, command);
   };
 
+  const agentTerminalOutput = selectedAgentId
+    ? terminalOutput.filter(
+        (entry) => !entry.agent_id || entry.agent_id === selectedAgentId
+      )
+    : terminalOutput;
+
   return (
-    <div className="min-h-screen bg-gray-950 text-gray-100 flex flex-col">
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
       {/* Header */}
-      <header className="border-b border-gray-800 px-6 py-4 flex items-center justify-between">
+      <header className="border-b border-white/10 px-6 py-4 flex items-center justify-between bg-slate-950/80 backdrop-blur sticky top-0 z-10">
         <div>
-          <h1 className="text-xl font-bold tracking-tight">ChimeraC2</h1>
-          <p className="text-xs text-gray-500">Mission Control</p>
+          <h1 className="text-xl font-bold tracking-tight text-white">ChimeraC2</h1>
+          <p className="text-xs text-slate-400">Mission Control</p>
         </div>
         <ConnectionStatus status={status} />
       </header>
 
-      {/* Body */}
-      <main className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-4 p-4 overflow-hidden">
-        {/* Left: Agent fleet */}
-        <section className="bg-gray-900 rounded-lg border border-gray-800 overflow-hidden">
-          <div className="px-4 py-2 border-b border-gray-800 flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-gray-300">Agent Fleet</h2>
-            <span className="text-xs text-gray-500">{agents.length} active</span>
-          </div>
-          <AgentTable
-            agents={agents}
-            selectedAgentId={selectedAgentId}
-            onSelectAgent={setSelectedAgentId}
-          />
-        </section>
+      {/* Main Content */}
+      <main className="flex-1 p-6 space-y-6">
+        <AgentTable
+          agents={agents}
+          selectedAgentId={selectedAgentId}
+          onSelectAgent={setSelectedAgentId}
+        />
 
-        {/* Right: Terminal */}
-        <section className="bg-gray-900 rounded-lg border border-gray-800 overflow-hidden">
-          <div className="px-4 py-2 border-b border-gray-800 flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-gray-300">
-              Terminal {selectedAgent && `— ${selectedAgent.hostname}`}
-            </h2>
-            {selectedAgent && (
-              <span className="text-xs text-gray-500">
-                {selectedAgent.agent_id}
-              </span>
-            )}
-          </div>
-          <TerminalConsole
-            output={terminalOutput}
-            selectedAgent={selectedAgent}
-            onSend={handleSend}
-          />
-        </section>
+        <TerminalConsole
+  output={agentTerminalOutput}
+  selectedAgent={selectedAgent}
+  onSend={handleSend}
+/>
+
+<TaskHistory
+  selectedAgentId={selectedAgentId}
+/>
+
+<ActivityTimeline
+  selectedAgentId={selectedAgentId}
+/>
       </main>
     </div>
   );
@@ -66,10 +63,10 @@ export default function App() {
 function ConnectionStatus({ status }) {
   const color =
     status === 'open'
-      ? 'bg-green-500'
+      ? 'bg-emerald-400 shadow-emerald-400/50'
       : status === 'connecting'
-      ? 'bg-yellow-500 animate-pulse'
-      : 'bg-red-500';
+      ? 'bg-yellow-400 shadow-yellow-400/50 animate-pulse'
+      : 'bg-red-400 shadow-red-400/50';
 
   const label =
     status === 'open'
@@ -79,9 +76,9 @@ function ConnectionStatus({ status }) {
       : 'Disconnected';
 
   return (
-    <div className="flex items-center gap-2 text-xs text-gray-400">
-      <span className={`w-2 h-2 rounded-full ${color}`} />
-      {label}
+    <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-slate-300">
+      <span className={`h-2 w-2 rounded-full shadow-sm ${color}`} />
+      <span className="font-medium">{label}</span>
     </div>
   );
 }
