@@ -35,6 +35,11 @@ app.add_middleware(
 )
 
 
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
 # ============================================================
 # Configuration
 # ============================================================
@@ -46,6 +51,7 @@ AGENT_TIMEOUT = 15
 # In-memory real-time state
 # ============================================================
 
+>>>>>>> main
 connected_agents: Dict[str, dict] = {}
 
 task_queues: Dict[str, List[dict]] = {}
@@ -588,7 +594,6 @@ async def operator_websocket(
             })
 
     except WebSocketDisconnect:
-
         manager.disconnect(websocket)
 
     except Exception:
