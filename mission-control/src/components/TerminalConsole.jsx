@@ -30,16 +30,12 @@ export default function TerminalConsole({
     }
   }
 
-  const decodeOutput = (encodedOutput) => {
-    if (!encodedOutput) {
+  const decodeOutput = (output) => {
+    if (!output) {
       return ""
     }
 
-    try {
-      return atob(encodedOutput)
-    } catch {
-      return "[Unable to decode terminal output]"
-    }
+    return output
   }
 
   return (
