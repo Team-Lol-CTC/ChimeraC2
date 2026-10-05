@@ -51,7 +51,6 @@ AGENT_TIMEOUT = 15
 # In-memory real-time state
 # ============================================================
 
->>>>>>> main
 connected_agents: Dict[str, dict] = {}
 
 task_queues: Dict[str, List[dict]] = {}
