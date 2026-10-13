@@ -4,6 +4,7 @@ import { useC2Stream } from './hooks/useC2Stream';
 import AgentTable from './components/AgentTable';
 import TerminalConsole from './components/TerminalConsole';
 import TaskHistory from './components/TaskHistory';
+import TriageDetails from './components/TriageDetails'
 
 export default function App() {
   const { agents, terminalOutput, sendCommand, status } = useC2Stream();
@@ -41,6 +42,7 @@ export default function App() {
           selectedAgentId={selectedAgentId}
           onSelectAgent={setSelectedAgentId}
         />
+        <TriageDetails selectedAgent={selectedAgent} />
 
         <TerminalConsole
   output={agentTerminalOutput}
