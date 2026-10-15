@@ -30,17 +30,25 @@ def get_internal_ip():
 
 
 def collect_system_survey():
-    mem = psutil.virtual_memory()
-    processes = []
+    try:
+        mem = psutil.virtual_memory()
+        total_ram = round(mem.total / (1024 ** 3), 2)
+        avail_ram = round(mem.available / (1024 ** 3), 2)
+    except Exception:
+        total_ram = 0.0
+        avail_ram = 0.0
 
+    processes = []
     try:
         for p in psutil.process_iter(["pid", "name"]):
             processes.append(p.info)
-
             if len(processes) >= 10:
                 break
     except Exception:
         processes = []
+
+    user = getpass.getuser()
+    ip = get_internal_ip()
 
     return {
         "hostname": socket.gethostname(),
@@ -48,12 +56,14 @@ def collect_system_survey():
         "os_release": platform.release(),
         "os_version": platform.version(),
         "architecture": platform.machine(),
-        "current_user": getpass.getuser(),
+        "user": user,
+        "current_user": user,
         "is_privileged": is_elevated(),
-        "internal_ip": get_internal_ip(),
-        "cpu_cores": os.cpu_count(),
-        "total_ram_gb": round(mem.total / (1024 ** 3), 2),
-        "available_ram_gb": round(mem.available / (1024 ** 3), 2),
+        "ip": ip,
+        "internal_ip": ip,
+        "cpu_cores": os.cpu_count() or 1,
+        "total_ram_gb": total_ram,
+        "available_ram_gb": avail_ram,
         "sample_processes": processes,
     }
 
