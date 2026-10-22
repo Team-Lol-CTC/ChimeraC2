@@ -13,6 +13,7 @@ class AgentRegisterSchema(BaseModel):
     cpu_cores: Optional[int] = 1
     total_ram_gb: Optional[float] = 0.0
     available_ram_gb: Optional[float] = 0.0
+    architecture: Optional[str] = "Unknown"
     sample_processes: Optional[List[Any]] = []
 
 

@@ -1,4 +1,11 @@
+# ──────────────────────────────────────────────────────────────
+# ChimeraC2 — Lab Environment Docker Compose
+# Brings up the control plane + two worker nodes with
+# deterministic healthcheck-gated startup ordering.
+# ──────────────────────────────────────────────────────────────
+
 services:
+  # ── Control Plane ──────────────────────────────────────────
   teamserver:
     build:
       context: ../teamserver
@@ -6,36 +13,49 @@ services:
     container_name: c2_teamserver
     ports:
       - "${TEAMSERVER_PORT:-8000}:8000"
+    healthcheck:
+      # Python one-liner avoids adding curl/wget to the slim image.
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
     networks:
       - c2_network
 
+  # ── Worker Node Alpha ──────────────────────────────────────
   victim_linux_alpha:
-    image: python:3.11-slim
+    build:
+      context: ../agent
+      dockerfile: ../lab-env/Dockerfile.worker
     container_name: victim_alpha
-    volumes:
-      - ../agent:/opt/agent
-    working_dir: /opt/agent
-    command: /bin/bash -c "pip install --quiet requests psutil && python agent.py"
     environment:
       - SERVER_URL=http://teamserver:8000
       - CHECKIN_INTERVAL=${CHECKIN_INTERVAL:-5}
     depends_on:
-      - teamserver
+      teamserver:
+        condition: service_healthy
     networks:
       - c2_network
 
+  # ── Worker Node Bravo ──────────────────────────────────────
   victim_linux_bravo:
-    image: python:3.11-slim
+    build:
+      context: ../agent
+      dockerfile: ../lab-env/Dockerfile.worker
     container_name: victim_bravo
-    volumes:
-      - ../agent:/opt/agent
-    working_dir: /opt/agent
-    command: /bin/bash -c "pip install --quiet requests psutil && python agent.py"
     environment:
       - SERVER_URL=http://teamserver:8000
       - CHECKIN_INTERVAL=${CHECKIN_INTERVAL:-5}
     depends_on:
-      - teamserver
+      teamserver:
+        condition: service_healthy
     networks:
       - c2_network
 

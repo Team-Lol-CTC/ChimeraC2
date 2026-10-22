@@ -1,11 +1,47 @@
+# Python Bytecode & Caches
 __pycache__/
-*.pyc
-.env
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Virtual Environments
 venv/
+.venv/
+env/
+
+# Node & Frontend Build
 node_modules/
 dist/
-*.log
-.DS_Store
+.vite/
 
-# Local ChimeraC2 database
+# Worker Distribution Artifacts
+dist_worker/
+dist_worker.zip
+
+# Environment Variables & Secrets
+.env
+.env.*
+*.env
+lab-env/.env
+!.env.example
+!*.env.example
+!lab-env/.env.example
+
+# Databases & Persistent Stores
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
 teamserver/chimera_c2.db
+
+# Logs & Diagnostics
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS Artifacts
+.DS_Store
+Thumbs.db

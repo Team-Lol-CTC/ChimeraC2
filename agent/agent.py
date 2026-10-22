@@ -5,6 +5,7 @@ import platform
 import random
 import socket
 import subprocess
+import sys
 import time
 import uuid
 
@@ -39,12 +40,32 @@ except ImportError:
         collect_system_survey = None
 
 
-# Dynamic configuration with environment variable support for containerized lab
-SERVER_URL = os.environ.get("SERVER_URL", "http://127.0.0.1:8000").rstrip("/")
+# Dynamic configuration with interactive fallback and environment variable support
+def _resolve_server_url() -> str:
+    env_url = os.environ.get("SERVER_URL")
+    if env_url:
+        return env_url.rstrip("/")
+
+    # If run in an interactive terminal and no env var was provided
+    if hasattr(sys.stdin, "isatty") and sys.stdin.isatty():
+        try:
+            user_input = input("Target Server URL [Press Enter for http://127.0.0.1:8000]: ").strip()
+            if user_input:
+                return user_input.rstrip("/")
+        except (KeyboardInterrupt, EOFError):
+            print()
+
+    return "http://127.0.0.1:8000"
+
+
+SERVER_URL = _resolve_server_url()
 CHECKIN_INTERVAL = float(os.environ.get("CHECKIN_INTERVAL", "5.0"))
 
-# Keep the agent identity stable across restarts
-AGENT_ID_FILE = os.path.expanduser("~/.chimera_agent_id")
+# Keep the agent identity stable across restarts (supports isolated multi-instance testing)
+AGENT_ID_FILE = os.environ.get(
+    "CHIMERA_AGENT_ID_FILE",
+    os.path.expanduser("~/.chimera_agent_id")
+)
 
 
 def get_agent_id():

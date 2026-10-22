@@ -102,7 +102,8 @@ def run_tests():
     print("\n--- Testing Deliverable 3: Startup In-Memory Rehydration ---")
 
     # Queue a task directly in SQLite
-    task_id = "task-rehydrate-test"
+    import uuid
+    task_id = f"task-rehydrate-{uuid.uuid4().hex[:8]}"
     db.create_task(task_id, agent_id, "whoami /priv")
 
     # Simulate server reboot by wiping in-memory state

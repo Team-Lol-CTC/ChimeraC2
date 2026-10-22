@@ -1,8 +1,12 @@
 import asyncio
 import base64
 import datetime
+import logging
+import traceback
 import uuid
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger("chimera.teamserver")
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -147,38 +151,42 @@ async def register_agent(payload: AgentRegisterSchema) -> Dict[str, Any]:
     Strictly validated via AgentRegisterSchema; missing required fields
     automatically trigger HTTP 422 Unprocessable Entity.
     """
-    agent_data = payload.model_dump()
-    agent_id = agent_data["agent_id"]
-    now = utc_now()
+    try:
+        agent_data = payload.model_dump()
+        agent_id = agent_data["agent_id"]
+        now = utc_now()
 
-    agent_data["last_seen"] = now
-    agent_data["status"] = "online"
+        agent_data["last_seen"] = now
+        agent_data["status"] = "online"
 
-    # Update in-memory state
-    connected_agents[agent_id] = agent_data
-    if agent_id not in task_queues:
-        task_queues[agent_id] = []
+        # Update in-memory state
+        connected_agents[agent_id] = agent_data
+        if agent_id not in task_queues:
+            task_queues[agent_id] = []
 
-    # Persist to SQLite with full telemetry
-    upsert_agent(agent_data)
+        # Persist to SQLite with full telemetry
+        upsert_agent(agent_data)
 
-    # Record registration audit log
-    add_audit_log(
-        event_type="AGENT_REGISTERED",
-        agent_id=agent_id,
-        message=f"Agent {agent_id} ({agent_data.get('hostname')}) registered",
-    )
+        # Record registration audit log
+        add_audit_log(
+            event_type="AGENT_REGISTERED",
+            agent_id=agent_id,
+            message=f"Agent {agent_id} ({agent_data.get('hostname')}) registered",
+        )
 
-    # Broadcast event to connected operators
-    await manager.broadcast({
-        "type": "AGENT_REGISTER",
-        "agent": agent_data,
-    })
+        # Broadcast event to connected operators
+        await manager.broadcast({
+            "type": "AGENT_REGISTER",
+            "agent": agent_data,
+        })
 
-    return {
-        "status": "registered",
-        "agent_id": agent_id,
-    }
+        return {
+            "status": "registered",
+            "agent_id": agent_id,
+        }
+    except Exception as exc:
+        logger.error("register_agent failed: %s\n%s", exc, traceback.format_exc())
+        return {"status": "error", "detail": str(exc)}
 
 
 # ============================================================
@@ -192,69 +200,73 @@ async def poll_tasks(payload: PollRequestSchema) -> Dict[str, Any]:
     Strictly validated via PollRequestSchema.
     Returns queued command or empty task object.
     """
-    agent_id = payload.agent_id
+    try:
+        agent_id = payload.agent_id
 
-    # If unrecognized in memory, attempt fallback to SQLite persistence
-    if agent_id not in connected_agents:
-        persisted = get_agent(agent_id)
-        if persisted:
-            connected_agents[agent_id] = persisted
-            if agent_id not in task_queues:
-                task_queues[agent_id] = []
-        else:
-            return {
-                "task": None,
-                "error": "unknown agent_id",
-            }
+        # If unrecognized in memory, attempt fallback to SQLite persistence
+        if agent_id not in connected_agents:
+            persisted = get_agent(agent_id)
+            if persisted:
+                connected_agents[agent_id] = persisted
+                if agent_id not in task_queues:
+                    task_queues[agent_id] = []
+            else:
+                return {
+                    "task": None,
+                    "error": "unknown agent_id",
+                }
 
-    now = utc_now()
-    agent = connected_agents[agent_id]
-    previous_status = agent.get("status", "offline")
+        now = utc_now()
+        agent = connected_agents[agent_id]
+        previous_status = agent.get("status", "offline")
 
-    agent["last_seen"] = now
-    agent["status"] = "online"
+        agent["last_seen"] = now
+        agent["status"] = "online"
 
-    # Persist heartbeat check-in
-    upsert_agent(agent)
+        # Persist heartbeat check-in
+        upsert_agent(agent)
 
-    await manager.broadcast({
-        "type": "AGENT_HEARTBEAT",
-        "agent_id": agent_id,
-        "ts": now,
-        "status": "online",
-    })
-
-    # Transition to online audit and notification
-    if previous_status == "offline":
-        add_audit_log(
-            event_type="AGENT_ONLINE",
-            agent_id=agent_id,
-            message=f"Agent {agent_id} came back online",
-        )
         await manager.broadcast({
-            "type": "AGENT_REGISTER",
-            "agent": agent,
+            "type": "AGENT_HEARTBEAT",
+            "agent_id": agent_id,
+            "ts": now,
+            "status": "online",
         })
 
-    # Deliver queued task if available
-    if task_queues.get(agent_id):
-        task = task_queues[agent_id].pop(0)
-        mark_task_running(task["task_id"])
+        # Transition to online audit and notification
+        if previous_status == "offline":
+            add_audit_log(
+                event_type="AGENT_ONLINE",
+                agent_id=agent_id,
+                message=f"Agent {agent_id} came back online",
+            )
+            await manager.broadcast({
+                "type": "AGENT_REGISTER",
+                "agent": agent,
+            })
 
-        add_audit_log(
-            event_type="TASK_RUNNING",
-            agent_id=agent_id,
-            task_id=task["task_id"],
-            message=f"Task {task['task_id']} started running",
-        )
+        # Deliver queued task if available
+        if task_queues.get(agent_id):
+            task = task_queues[agent_id].pop(0)
+            mark_task_running(task["task_id"])
+
+            add_audit_log(
+                event_type="TASK_RUNNING",
+                agent_id=agent_id,
+                task_id=task["task_id"],
+                message=f"Task {task['task_id']} started running",
+            )
+
+            return {
+                "task": task,
+            }
 
         return {
-            "task": task,
+            "task": None,
         }
-
-    return {
-        "task": None,
-    }
+    except Exception as exc:
+        logger.error("poll_tasks failed: %s\n%s", exc, traceback.format_exc())
+        return {"task": None, "error": str(exc)}
 
 
 # ============================================================
@@ -267,52 +279,62 @@ async def receive_result(payload: TaskResultSchema) -> Dict[str, Any]:
     Receive and persist command execution output from agents.
     Strictly validated via TaskResultSchema; decodes Base64 obfuscated output.
     """
-    result_data = payload.model_dump()
-    agent_id = result_data["agent_id"]
-    task_id = result_data["task_id"]
-    output = result_data.get("output", "")
-    exit_code = result_data.get("exit_code", -1)
-
-    # Decode Base64 obfuscation when applicable with raw fallback
     try:
-        decoded_output = base64.b64decode(output, validate=True).decode("utf-8")
-    except Exception:
-        decoded_output = output
+        result_data = payload.model_dump()
+        agent_id = result_data["agent_id"]
+        task_id = result_data["task_id"]
+        output = result_data.get("output", "")
+        exit_code = result_data.get("exit_code", -1)
 
-    result_data["decoded_output"] = decoded_output
+        # Decode Base64 obfuscation when applicable with safe UTF-8 fallback.
+        # Using errors='replace' ensures non-UTF-8 binary bytes render as
+        # U+FFFD replacement characters rather than raising a decode error.
+        try:
+            decoded_output = base64.b64decode(output, validate=True).decode(
+                "utf-8", errors="replace"
+            )
+        except Exception:
+            decoded_output = output
 
-    # Persist completion in database
-    if task_id:
-        complete_task(
-            task_id=task_id,
-            output=decoded_output,
-            exit_code=exit_code,
-        )
+        # Replace raw output with decoded plaintext for the broadcast payload
+        result_data["output"] = decoded_output
+        result_data["decoded_output"] = decoded_output
 
-        event_type = "TASK_COMPLETED" if exit_code == 0 else "TASK_FAILED"
-        add_audit_log(
-            event_type=event_type,
-            agent_id=agent_id,
-            task_id=task_id,
-            message=f"Task {task_id} finished with exit code {exit_code}",
-        )
+        # Persist completion in database
+        if task_id:
+            complete_task(
+                task_id=task_id,
+                output=decoded_output,
+                exit_code=exit_code,
+            )
 
-    # Keep agent marked online
-    if agent_id in connected_agents:
-        now = utc_now()
-        connected_agents[agent_id]["last_seen"] = now
-        connected_agents[agent_id]["status"] = "online"
-        upsert_agent(connected_agents[agent_id])
+            event_type = "TASK_COMPLETED" if exit_code == 0 else "TASK_FAILED"
+            add_audit_log(
+                event_type=event_type,
+                agent_id=agent_id,
+                task_id=task_id,
+                message=f"Task {task_id} finished with exit code {exit_code}",
+            )
 
-    # Broadcast task result to dashboard operators
-    await manager.broadcast({
-        "type": "TASK_RESULT",
-        "result": result_data,
-    })
+        # Keep agent marked online
+        if agent_id in connected_agents:
+            now = utc_now()
+            connected_agents[agent_id]["last_seen"] = now
+            connected_agents[agent_id]["status"] = "online"
+            upsert_agent(connected_agents[agent_id])
 
-    return {
-        "status": "accepted",
-    }
+        # Broadcast task result to dashboard operators
+        await manager.broadcast({
+            "type": "TASK_RESULT",
+            "result": result_data,
+        })
+
+        return {
+            "status": "accepted",
+        }
+    except Exception as exc:
+        logger.error("receive_result failed: %s\n%s", exc, traceback.format_exc())
+        return {"status": "error", "detail": str(exc)}
 
 
 # ============================================================
@@ -324,24 +346,28 @@ async def get_task_history(
     agent_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Fetch task history optionally filtered by agent_id."""
-    if agent_id:
-        tasks = get_tasks_for_agent(agent_id)
-    else:
-        conn = get_connection()
-        rows = conn.execute(
-            """
-            SELECT *
-            FROM tasks
-            ORDER BY created_at DESC
-            """
-        ).fetchall()
-        conn.close()
-        tasks = [dict(row) for row in rows]
+    try:
+        if agent_id:
+            tasks = get_tasks_for_agent(agent_id)
+        else:
+            conn = get_connection()
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM tasks
+                ORDER BY created_at DESC
+                """
+            ).fetchall()
+            conn.close()
+            tasks = [dict(row) for row in rows]
 
-    return {
-        "count": len(tasks),
-        "tasks": tasks,
-    }
+        return {
+            "count": len(tasks),
+            "tasks": tasks,
+        }
+    except Exception as exc:
+        logger.error("get_task_history failed: %s\n%s", exc, traceback.format_exc())
+        return {"count": 0, "tasks": [], "error": str(exc)}
 
 
 # ============================================================
@@ -355,16 +381,20 @@ async def audit_history(
     limit: int = 100,
 ) -> Dict[str, Any]:
     """Fetch recent audit events with bounded pagination."""
-    bounded_limit = max(1, min(limit, 500))
-    logs = get_audit_logs(
-        agent_id=agent_id,
-        task_id=task_id,
-        limit=bounded_limit,
-    )
-    return {
-        "count": len(logs),
-        "logs": logs,
-    }
+    try:
+        bounded_limit = max(1, min(limit, 500))
+        logs = get_audit_logs(
+            agent_id=agent_id,
+            task_id=task_id,
+            limit=bounded_limit,
+        )
+        return {
+            "count": len(logs),
+            "logs": logs,
+        }
+    except Exception as exc:
+        logger.error("audit_history failed: %s\n%s", exc, traceback.format_exc())
+        return {"count": 0, "logs": [], "error": str(exc)}
 
 
 # ============================================================

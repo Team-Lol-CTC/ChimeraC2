@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from "react"
 import { CheckCircle2, Clock3, RefreshCw, XCircle } from "lucide-react"
-
-const API_URL = "http://127.0.0.1:8000"
+import { API_URL } from "../config"
 
 export default function TaskHistory({ selectedAgentId }) {
   const [tasks, setTasks] = useState([])
@@ -35,8 +34,43 @@ export default function TaskHistory({ selectedAgentId }) {
   }, [selectedAgentId])
 
   useEffect(() => {
-    loadTasks()
-  }, [loadTasks])
+    let ignore = false
+
+    const fetchTasks = async () => {
+      try {
+        const url = selectedAgentId
+          ? `${API_URL}/api/v1/tasks?agent_id=${encodeURIComponent(selectedAgentId)}`
+          : `${API_URL}/api/v1/tasks`
+
+        const response = await fetch(url)
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`)
+        }
+
+        const data = await response.json()
+
+        if (!ignore) {
+          setTasks(Array.isArray(data.tasks) ? data.tasks : [])
+        }
+      } catch (err) {
+        if (!ignore) {
+          console.error("[TaskHistory]", err)
+          setError("Unable to load task history.")
+        }
+      } finally {
+        if (!ignore) {
+          setLoading(false)
+        }
+      }
+    }
+
+    fetchTasks()
+
+    return () => {
+      ignore = true
+    }
+  }, [selectedAgentId])
 
   return (
     <section className="overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-b from-slate-900/90 to-slate-950 shadow-2xl shadow-black/40 ring-1 ring-white/5">

@@ -13,8 +13,12 @@ def utc_now() -> str:
 
 
 def get_connection() -> sqlite3.Connection:
-    """Establish and return an active SQLite connection with Row factory."""
-    conn = sqlite3.connect(DB_NAME)
+    """Establish and return an active SQLite connection with Row factory.
+
+    Uses a 30-second busy timeout so high-frequency agent check-ins
+    do not immediately fail with 'database is locked' under contention.
+    """
+    conn = sqlite3.connect(DB_NAME, timeout=30.0)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -26,6 +30,10 @@ def init_db() -> None:
     """
     conn = get_connection()
     cur = conn.cursor()
+
+    # Enable Write-Ahead Logging for concurrent read/write performance
+    cur.execute("PRAGMA journal_mode=WAL;")
+    cur.execute("PRAGMA synchronous=NORMAL;")
 
     cur.execute(
         """
@@ -41,6 +49,7 @@ def init_db() -> None:
             cpu_cores INTEGER DEFAULT 1,
             total_ram_gb REAL DEFAULT 0.0,
             available_ram_gb REAL DEFAULT 0.0,
+            architecture TEXT DEFAULT 'Unknown',
             sample_processes TEXT DEFAULT '[]'
         )
         """
@@ -54,6 +63,7 @@ def init_db() -> None:
         "cpu_cores": "INTEGER DEFAULT 1",
         "total_ram_gb": "REAL DEFAULT 0.0",
         "available_ram_gb": "REAL DEFAULT 0.0",
+        "architecture": "TEXT DEFAULT 'Unknown'",
         "sample_processes": "TEXT DEFAULT '[]'",
     }
     for col_name, col_def in telemetry_columns.items():
@@ -219,9 +229,10 @@ def upsert_agent(agent_data: Dict[str, Any]) -> None:
             cpu_cores,
             total_ram_gb,
             available_ram_gb,
+            architecture,
             sample_processes
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 
         ON CONFLICT(agent_id) DO UPDATE SET
             hostname = COALESCE(excluded.hostname, agents.hostname),
@@ -234,6 +245,7 @@ def upsert_agent(agent_data: Dict[str, Any]) -> None:
             cpu_cores = COALESCE(excluded.cpu_cores, agents.cpu_cores),
             total_ram_gb = COALESCE(excluded.total_ram_gb, agents.total_ram_gb),
             available_ram_gb = COALESCE(excluded.available_ram_gb, agents.available_ram_gb),
+            architecture = COALESCE(excluded.architecture, agents.architecture),
             sample_processes = COALESCE(excluded.sample_processes, agents.sample_processes)
         """,
         (
@@ -248,6 +260,7 @@ def upsert_agent(agent_data: Dict[str, Any]) -> None:
             agent_data.get("cpu_cores"),
             agent_data.get("total_ram_gb"),
             agent_data.get("available_ram_gb"),
+            agent_data.get("architecture"),
             sample_procs_json,
         ),
     )

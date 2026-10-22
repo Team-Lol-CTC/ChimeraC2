@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react"
+import { WS_URL } from "../config"
 
-export function useC2Stream(wsUrl = "ws://127.0.0.1:8000/ws/operator") {
+export function useC2Stream(wsUrl = WS_URL) {
   const [agents, setAgents] = useState([])
   const [terminalOutput, setTerminalOutput] = useState([])
   const [status, setStatus] = useState("connecting")

@@ -1,0 +1,36 @@
+# ──────────────────────────────────────────────────────────────
+# ChimeraC2 — Worker Node Dockerfile
+# Builds a minimal, reproducible container for the polling agent.
+# Runs as an unprivileged "worker" user so the triage module
+# correctly reports is_privileged=false via os.getuid() != 0.
+# ──────────────────────────────────────────────────────────────
+FROM python:3.11-slim
+
+# Keep Python output unbuffered for real-time `docker compose logs`
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+# Install runtime dependencies in a dedicated layer for cache efficiency.
+# No --no-cache-dir: the layer itself is the cache boundary.
+RUN pip install --no-cache-dir requests psutil
+
+# Create an unprivileged system user for privilege-separation testing.
+# -r  = system account (no aging, low UID)
+# -s  = nologin shell (defense-in-depth)
+# -m  = create home dir (agent persists ~/.chimera_agent_id there)
+RUN groupadd --system worker \
+    && useradd --system --gid worker --create-home --shell /usr/sbin/nologin worker
+
+WORKDIR /opt/agent
+
+# Copy the full agent tree: agent.py, obfuscation.py, modules/
+COPY . /opt/agent/
+
+# Ensure the worker user owns the working directory so it can
+# write the persistent agent ID file at startup.
+RUN chown -R worker:worker /opt/agent
+
+USER worker
+
+# Default entrypoint — overridable via docker-compose command
+ENTRYPOINT ["python", "agent.py"]

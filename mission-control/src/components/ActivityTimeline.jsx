@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-
-const API_URL = 'http://127.0.0.1:8000';
+import { API_URL } from '../config';
 
 const EVENT_STYLES = {
   AGENT_REGISTERED: {
@@ -106,7 +105,41 @@ export default function ActivityTimeline({ selectedAgentId }) {
   }, [selectedAgentId]);
 
   useEffect(() => {
-    loadLogs();
+    let cancelled = false;
+
+    const fetchLogs = async () => {
+      try {
+        const params = new URLSearchParams();
+        if (selectedAgentId) {
+          params.set('agent_id', selectedAgentId);
+        }
+        params.set('limit', '100');
+
+        const response = await fetch(
+          `${API_URL}/api/v1/audit?${params.toString()}`
+        );
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        if (!cancelled) {
+          setLogs(Array.isArray(data.logs) ? data.logs : []);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err.message || 'Failed to load activity');
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+
+    fetchLogs();
 
     const interval = setInterval(
       loadLogs,
@@ -114,9 +147,10 @@ export default function ActivityTimeline({ selectedAgentId }) {
     );
 
     return () => {
+      cancelled = true;
       clearInterval(interval);
     };
-  }, [loadLogs]);
+  }, [selectedAgentId, loadLogs]);
 
   return (
     <section className="rounded-2xl border border-white/10 bg-slate-900/70 overflow-hidden">
